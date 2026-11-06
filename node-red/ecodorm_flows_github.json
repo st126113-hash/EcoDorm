@@ -1,0 +1,579 @@
+[
+    {
+        "id": "d3be21a7afca2e5a",
+        "type": "tab",
+        "label": "EcoDorm Capstone",
+        "disabled": false,
+        "info": "",
+        "env": [
+            {
+                "name": "ECODORM_API_KEY",
+                "type": "cred"
+            },
+            {
+                "name": "LINE_CHANNEL_ACCESS_TOKEN",
+                "type": "cred"
+            },
+            {
+                "name": "LINE_USER_ID",
+                "value": "YOUR_LINE_USER_ID",
+                "type": "str"
+            }
+        ]
+    },
+    {
+        "id": "f2c28efe34cfbc69",
+        "type": "debug",
+        "z": "d3be21a7afca2e5a",
+        "name": "debug 1",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 980,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "a48e96c1e6d7b3aa",
+        "type": "function",
+        "z": "d3be21a7afca2e5a",
+        "name": "Validate & Format EcoDorm",
+        "func": "\nconst expectedKey = env.get(\"ECODORM_API_KEY\");\nconst receivedKey = msg.req?.headers?.[\"x-api-key\"];\n\n// สร้าง HTTP Response สำหรับตอบ ESP32\nfunction respond(code, body) {\n    msg.statusCode = code;\n    msg.headers = { \"Content-Type\": \"application/json\" };\n    msg.payload = body;\n\n    // Output 1 ไม่ส่งข้อมูล\n    // Output 2 ตอบ HTTP\n    return [null, msg];\n}\n\n// 1. ตรวจว่ามีการตั้ง API Key ฝั่ง Server\nif (!expectedKey || expectedKey.length < 32) {\n    return respond(503, {\n        success: false,\n        error: \"Server authentication not configured\"\n    });\n}\n\n// 2. ตรวจ API Key ของอุปกรณ์\nif (!receivedKey || receivedKey !== expectedKey) {\n    return respond(401, {\n        success: false,\n        error: \"Unauthorized\"\n    });\n}\n\n// 3. อ่าน JSON ที่ ESP32 ส่งมา\nlet data = msg.payload;\n\nif (typeof data === \"string\") {\n    try {\n        data = JSON.parse(data);\n    } catch (err) {\n        return respond(400, {\n            success: false,\n            error: \"Invalid JSON\"\n        });\n    }\n}\n\nif (!data || typeof data !== \"object\" || Array.isArray(data)) {\n    return respond(400, {\n        success: false,\n        error: \"Invalid payload\"\n    });\n}\n\n// ตรวจว่าค่าที่ส่งมาเป็นตัวเลขจริง\nfunction validNumber(value, min, max) {\n    return typeof value === \"number\"\n        && Number.isFinite(value)\n        && value >= min\n        && value <= max;\n}\n\nlet fields = {};\nlet tags = {\n    room: \"room308\"\n};\n\n// 4. ESP32 #1 - DHT22\nif (data.device_id === \"temp01\") {\n\n    if (\n        !validNumber(data.temperature, -20, 80) ||\n        !validNumber(data.humidity, 0, 100)\n    ) {\n        return respond(400, {\n            success: false,\n            error: \"Invalid DHT22 values\"\n        });\n    }\n\n    fields = {\n        temperature: data.temperature,\n        humidity: data.humidity\n    };\n\n    tags.device_id = \"temp01\";\n    tags.sensor = \"DHT22\";\n\n    \n    tags.status = (\n    data.temperature > 36 ||\n    data.humidity > 85\n    ) ? \"CRITICAL\" : (\n    data.temperature > 32 ||\n    data.humidity > 75\n    ) ? \"WARNING\" : \"NORMAL\";\n\n\n    // 5. ESP32 #2 - PMS5003\n} else if (data.device_id === \"air01\") {\n\n    if (\n        !validNumber(data.pm1, 0, 1000) ||\n        !validNumber(data.pm25, 0, 1000) ||\n        !validNumber(data.pm10, 0, 1000) ||\n        data.pm1 > data.pm25 ||\n        data.pm25 > data.pm10\n    ) {\n        return respond(400, {\n            success: false,\n            error: \"Invalid PMS5003 values\"\n        });\n    }\n\n    fields = {\n        pm1: data.pm1,\n        pm25: data.pm25,\n        pm10: data.pm10\n    };\n\n    tags.device_id = \"air01\";\n    tags.sensor = \"PMS5003\";\n\n    // เกณฑ์สาธิตของ EcoDorm\n    tags.status = data.pm25 >= 76 ? \"CRITICAL\"\n        : data.pm25 > 35 ? \"WARNING\"\n            : \"NORMAL\";\n\n} else {\n    return respond(400, {\n        success: false,\n        error: \"Unknown device_id\"\n    });\n}\n\n// 6. ส่งข้อมูลไป InfluxDB\nconst dbMessage = {\n    payload: [fields, tags]\n};\n\n// 7. ตอบกลับอุปกรณ์ว่า Server รับข้อมูลไว้ประมวลผล\nmsg.statusCode = 202;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nmsg.payload = {\n    success: true,\n    accepted: true,\n    device_id: data.device_id\n};\n\n// Output 1 = InfluxDB\n// Output 2 = HTTP Response\nreturn [dbMessage, msg];\n",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 700,
+        "y": 400,
+        "wires": [
+            [
+                "3a3151c54fd0597f",
+                "f2c28efe34cfbc69",
+                "aed4f56195e2fbc4",
+                "41cf8d4d3c669dd4"
+            ],
+            [
+                "31b9973fdeb42ee0"
+            ]
+        ]
+    },
+    {
+        "id": "1d0dfe7effd647d9",
+        "type": "http in",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm HTTPS Receiver",
+        "url": "/api/ecodorm/telemetry",
+        "method": "post",
+        "upload": false,
+        "skipBodyParsing": false,
+        "swaggerDoc": "",
+        "x": 370,
+        "y": 360,
+        "wires": [
+            [
+                "a48e96c1e6d7b3aa"
+            ]
+        ]
+    },
+    {
+        "id": "31b9973fdeb42ee0",
+        "type": "http response",
+        "z": "d3be21a7afca2e5a",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 710,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "3a3151c54fd0597f",
+        "type": "influxdb out",
+        "z": "d3be21a7afca2e5a",
+        "influxdb": "d30df3efbd8811ec",
+        "name": "EcoDorm Proxmox InfluxDB",
+        "measurement": "ecodorm_sensors",
+        "precision": "",
+        "retentionPolicy": "",
+        "database": "database",
+        "precisionV18FluxV20": "ms",
+        "retentionPolicyV18Flux": "",
+        "org": "ait-iot-lab7",
+        "bucket": "ecodorm_telemetry",
+        "x": 1040,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "aed4f56195e2fbc4",
+        "type": "function",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Alert Handling",
+        "func": "\nconst data = msg.payload;\n\n// 1. ตรวจรูปแบบข้อมูลจาก Validate & Format\nif (!Array.isArray(data) || data.length !== 2) {\n    return null;\n}\n\nconst fields = data[0];\nconst tags = data[1];\n\nif (!fields || !tags) {\n    return null;\n}\n\nconst deviceId = tags.device_id;\nconst status = tags.status;\n\n// 2. ตรวจ Device และ Status\nif (![\"temp01\", \"air01\"].includes(deviceId)) {\n    return null;\n}\n\nif (![\"NORMAL\", \"WARNING\", \"CRITICAL\"].includes(status)) {\n    return null;\n}\n\n// 3. จำสถานะล่าสุดแยกตามอุปกรณ์\nconst key = \"lastStatus_\" + deviceId;\nconst previousStatus = context.get(key);\n\n// สถานะไม่เปลี่ยน ไม่ต้องแจ้งซ้ำ\nif (previousStatus === status) {\n    return null;\n}\n\n// บันทึกสถานะใหม่\ncontext.set(key, status);\n\n// ครั้งแรกถ้าปกติ ไม่ต้องส่ง Alert\nif (previousStatus === undefined && status === \"NORMAL\") {\n    return null;\n}\n\n// 4. สร้าง Alert Event\nmsg.payload = {\n    event: status === \"NORMAL\" ? \"RECOVERED\" : \"ALERT\",\n    device_id: deviceId,\n    sensor: tags.sensor,\n    room: tags.room,\n    previous_status: previousStatus ?? \"UNKNOWN\",\n    status: status,\n    timestamp: new Date().toISOString(),\n    readings: fields\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1030,
+        "y": 340,
+        "wires": [
+            [
+                "60230356fd817333",
+                "a4d3108bae5bfb69"
+            ]
+        ]
+    },
+    {
+        "id": "60230356fd817333",
+        "type": "debug",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Alert Debug",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1280,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "a5f49766e552131e",
+        "type": "function",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Alert Handling TEST",
+        "func": "\nconst data = msg.payload;\n\n// 1. ตรวจรูปแบบข้อมูลจาก Validate & Format\nif (!Array.isArray(data) || data.length !== 2) {\n    return null;\n}\n\nconst fields = data[0];\nconst tags = data[1];\n\nif (!fields || !tags) {\n    return null;\n}\n\nconst deviceId = tags.device_id;\nconst status = tags.status;\n\n// 2. ตรวจ Device และ Status\nif (![\"temp01\", \"air01\"].includes(deviceId)) {\n    return null;\n}\n\nif (![\"NORMAL\", \"WARNING\", \"CRITICAL\"].includes(status)) {\n    return null;\n}\n\n// 3. จำสถานะล่าสุดแยกตามอุปกรณ์\nconst key = \"lastStatus_\" + deviceId;\nconst previousStatus = context.get(key);\n\n// สถานะไม่เปลี่ยน ไม่ต้องแจ้งซ้ำ\nif (previousStatus === status) {\n    return null;\n}\n\n// บันทึกสถานะใหม่\ncontext.set(key, status);\n\n// ครั้งแรกถ้าปกติ ไม่ต้องส่ง Alert\nif (previousStatus === undefined && status === \"NORMAL\") {\n    return null;\n}\n\n// 4. สร้าง Alert Event\nmsg.payload = {\n    event: status === \"NORMAL\" ? \"RECOVERED\" : \"ALERT\",\n    device_id: deviceId,\n    sensor: tags.sensor,\n    room: tags.room,\n    previous_status: previousStatus ?? \"UNKNOWN\",\n    status: status,\n    timestamp: new Date().toISOString(),\n    readings: fields\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 750,
+        "y": 700,
+        "wires": [
+            [
+                "99fd77da8149d1dd"
+            ]
+        ]
+    },
+    {
+        "id": "2bc3e6aed2cab836",
+        "type": "inject",
+        "z": "d3be21a7afca2e5a",
+        "name": "TEST WARNING",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": " [   {     \"pm1\": 10,     \"pm25\": 50,     \"pm10\": 60   },   {     \"room\": \"room308\",     \"device_id\": \"air01\",     \"sensor\": \"PMS5003\",     \"status\": \"WARNING\"   } ]",
+        "payloadType": "json",
+        "x": 420,
+        "y": 660,
+        "wires": [
+            [
+                "a5f49766e552131e"
+            ]
+        ]
+    },
+    {
+        "id": "99fd77da8149d1dd",
+        "type": "debug",
+        "z": "d3be21a7afca2e5a",
+        "name": "Alert TEST Debug",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1130,
+        "y": 720,
+        "wires": []
+    },
+    {
+        "id": "99ba7b59eb4e0d14",
+        "type": "inject",
+        "z": "d3be21a7afca2e5a",
+        "name": "TEST CRITICAL",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": " [   {     \"pm1\": 30,     \"pm25\": 90,     \"pm10\": 100   },   {     \"room\": \"room308\",     \"device_id\": \"air01\",     \"sensor\": \"PMS5003\",     \"status\": \"CRITICAL\"   } ]",
+        "payloadType": "json",
+        "x": 420,
+        "y": 740,
+        "wires": [
+            [
+                "a5f49766e552131e"
+            ]
+        ]
+    },
+    {
+        "id": "818030293ab1ab37",
+        "type": "inject",
+        "z": "d3be21a7afca2e5a",
+        "name": "TEST NORMAL",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": " [   {     \"pm1\": 10,     \"pm25\": 20,     \"pm10\": 25   },   {     \"room\": \"room308\",     \"device_id\": \"air01\",     \"sensor\": \"PMS5003\",     \"status\": \"NORMAL\"   } ]",
+        "payloadType": "json",
+        "x": 420,
+        "y": 820,
+        "wires": [
+            [
+                "a5f49766e552131e"
+            ]
+        ]
+    },
+    {
+        "id": "41cf8d4d3c669dd4",
+        "type": "function",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Device Activity",
+        "func": "\nconst data = msg.payload;\n\n// ตรวจรูปแบบข้อมูลจาก Validate & Format\nif (!Array.isArray(data) || data.length !== 2) {\n    return null;\n}\n\nconst tags = data[1];\nconst deviceId = tags?.device_id;\n\nif (![\"temp01\", \"air01\"].includes(deviceId)) {\n    return null;\n}\n\n// บันทึกเวลาที่ได้รับข้อมูลล่าสุด\nconst now = Date.now();\nflow.set(\"ecodorm_last_seen_\" + deviceId, now);\n\n// ตรวจว่าอุปกรณ์เคยถูกประกาศ OFFLINE หรือไม่\nconst wasOffline =\n    flow.get(\"ecodorm_offline_\" + deviceId) === true;\n\nnode.status({\n    fill: \"green\",\n    shape: \"dot\",\n    text: deviceId + \" data received\"\n});\n\n// ถ้ากลับมาหลัง OFFLINE ให้ส่ง ONLINE event\nif (wasOffline) {\n    flow.set(\"ecodorm_offline_\" + deviceId, false);\n\n    return {\n        topic: \"ecodorm/device\",\n        payload: {\n            event: \"ONLINE\",\n            device_id: deviceId,\n            room: tags.room || \"room308\",\n            timestamp: new Date(now).toISOString()\n        }\n    };\n}\n\n// ข้อมูลปกติไม่ต้องส่ง Event ทุกนาที\nreturn null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1030,
+        "y": 420,
+        "wires": [
+            [
+                "827f367cdc49d097",
+                "a4d3108bae5bfb69"
+            ]
+        ]
+    },
+    {
+        "id": "827f367cdc49d097",
+        "type": "debug",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Device Monitor Debug",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1390,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "f5e66ed068459ce8",
+        "type": "inject",
+        "z": "d3be21a7afca2e5a",
+        "name": "Check Devices Every 30s",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "30",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 940,
+        "y": 520,
+        "wires": [
+            [
+                "94ba2cc3edd04dc4"
+            ]
+        ]
+    },
+    {
+        "id": "94ba2cc3edd04dc4",
+        "type": "function",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Offline Checker",
+        "func": "\nconst devices = [\"temp01\", \"air01\"];\n\nconst TIMEOUT_MS = 180000; // 180 วินาที\nconst now = Date.now();\n\n// เวลาที่เริ่มระบบ Monitoring\nlet monitorStart = flow.get(\"ecodorm_monitor_start\");\n\nif (typeof monitorStart !== \"number\") {\n    monitorStart = now;\n    flow.set(\"ecodorm_monitor_start\", monitorStart);\n}\n\nlet offlineCount = 0;\n\nfor (const deviceId of devices) {\n    const lastSeen = flow.get(\n        \"ecodorm_last_seen_\" + deviceId\n    );\n\n    const isOffline = flow.get(\n        \"ecodorm_offline_\" + deviceId\n    ) === true;\n\n    // ถ้ายังไม่เคยได้รับข้อมูล ให้นับจากเวลาเริ่ม Monitoring\n    const referenceTime =\n        typeof lastSeen === \"number\"\n            ? lastSeen\n            : monitorStart;\n\n    const elapsed = now - referenceTime;\n\n    // ขาดข้อมูลเกิน 180 วินาที\n    if (elapsed > TIMEOUT_MS && !isOffline) {\n\n        flow.set(\n            \"ecodorm_offline_\" + deviceId,\n            true\n        );\n\n        offlineCount++;\n\n        node.send({\n            topic: \"ecodorm/device\",\n            payload: {\n                event: \"OFFLINE\",\n                device_id: deviceId,\n                room: \"room308\",\n                last_seen:\n                    typeof lastSeen === \"number\"\n                        ? new Date(lastSeen).toISOString()\n                        : null,\n                offline_for_seconds:\n                    Math.floor(elapsed / 1000),\n                timestamp: new Date(now).toISOString()\n            }\n        });\n    }\n}\n\nnode.status({\n    fill: offlineCount > 0 ? \"red\" : \"green\",\n    shape: \"dot\",\n    text: offlineCount > 0\n        ? \"OFFLINE detected\"\n        : \"Monitoring devices\"\n});\n\nreturn null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1190,
+        "y": 480,
+        "wires": [
+            [
+                "827f367cdc49d097",
+                "a4d3108bae5bfb69"
+            ]
+        ]
+    },
+    {
+        "id": "8f2bc5c6e90bbc2b",
+        "type": "catch",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Catch Errors",
+        "scope": [
+            "41cf8d4d3c669dd4",
+            "94ba2cc3edd04dc4",
+            "3a3151c54fd0597f",
+            "a48e96c1e6d7b3aa"
+        ],
+        "uncaught": false,
+        "x": 1020,
+        "y": 600,
+        "wires": [
+            [
+                "30b1e38dad0832cd"
+            ]
+        ]
+    },
+    {
+        "id": "30b1e38dad0832cd",
+        "type": "function",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Format Error",
+        "func": "\nconst err = msg.error || {};\n\nreturn {\n    topic: \"ecodorm/error\",\n    payload: {\n        event: \"PROCESSING_ERROR\",\n        source: err.source?.name || \"Unknown\",\n        message: String(err.message || \"Unknown error\"),\n        timestamp: new Date().toISOString()\n    }\n};\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1260,
+        "y": 600,
+        "wires": [
+            [
+                "6669b7d0fd1395e9"
+            ]
+        ]
+    },
+    {
+        "id": "6669b7d0fd1395e9",
+        "type": "debug",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Error Debug",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1500,
+        "y": 600,
+        "wires": []
+    },
+    {
+        "id": "395448cb7a59e37b",
+        "type": "inject",
+        "z": "d3be21a7afca2e5a",
+        "name": "Send LINE Test",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 440,
+        "y": 960,
+        "wires": [
+            [
+                "6e753069ac5dab52"
+            ]
+        ]
+    },
+    {
+        "id": "6e753069ac5dab52",
+        "type": "function",
+        "z": "d3be21a7afca2e5a",
+        "name": "Prepare LINE Test",
+        "func": "\nconst token = env.get(\"LINE_CHANNEL_ACCESS_TOKEN\");\nconst userId = env.get(\"LINE_USER_ID\");\n\nif (!token || !userId) {\n    node.error(\"LINE Token or User ID is missing\");\n    return null;\n}\n\nmsg.headers = {\n    \"Authorization\": \"Bearer \" + token,\n    \"Content-Type\": \"application/json\"\n};\n\nmsg.payload = JSON.stringify({\n    to: userId,\n    messages: [\n        {\n            type: \"text\",\n            text: \"EcoDorm LINE Test Successful ✅\"\n        }\n    ]\n});\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 670,
+        "y": 960,
+        "wires": [
+            [
+                "b77c531ee6fda4fc"
+            ]
+        ]
+    },
+    {
+        "id": "b77c531ee6fda4fc",
+        "type": "http request",
+        "z": "d3be21a7afca2e5a",
+        "name": "LINE Push API",
+        "method": "POST",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "https://api.line.me/v2/bot/message/push",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 900,
+        "y": 960,
+        "wires": [
+            [
+                "fe5ba8426aa58e9a"
+            ]
+        ]
+    },
+    {
+        "id": "fe5ba8426aa58e9a",
+        "type": "debug",
+        "z": "d3be21a7afca2e5a",
+        "name": "LINE Test Result",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "statusCode",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1130,
+        "y": 960,
+        "wires": []
+    },
+    {
+        "id": "a4d3108bae5bfb69",
+        "type": "function",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm Prepare LINE Alert",
+        "func": "\nconst event = msg.payload;\n\nconst token = env.get(\"LINE_CHANNEL_ACCESS_TOKEN\");\nconst userId = env.get(\"LINE_USER_ID\");\n\nif (!token || !userId) {\n    node.warn(\"LINE configuration is missing\");\n    return null;\n}\n\nif (!event || typeof event !== \"object\") {\n    return null;\n}\n\nconst allowedEvents = [\n    \"ALERT\",\n    \"RECOVERED\",\n    \"OFFLINE\",\n    \"ONLINE\"\n];\n\nif (!allowedEvents.includes(event.event)) {\n    return null;\n}\n\nif (![\"temp01\", \"air01\"].includes(event.device_id)) {\n    return null;\n}\n\nconst deviceName = event.device_id === \"temp01\"\n    ? \"DHT22 (Temperature / Humidity)\"\n    : \"PMS5003 (Air Quality)\";\n\nlet title = \"\";\n\nswitch (event.event) {\n    case \"ALERT\":\n        if (![\"WARNING\", \"CRITICAL\"].includes(event.status)) {\n            return null;\n        }\n\n        title = event.status === \"CRITICAL\"\n            ? \"🚨 CRITICAL ALERT\"\n            : \"⚠️ WARNING ALERT\";\n        break;\n\n    case \"RECOVERED\":\n        title = \"✅ RECOVERED\";\n        break;\n\n    case \"OFFLINE\":\n        title = \"🔴 DEVICE OFFLINE\";\n        break;\n\n    case \"ONLINE\":\n        title = \"🟢 DEVICE ONLINE\";\n        break;\n}\n\nconst lines = [\n    \"🏠 EcoDorm Monitoring\",\n    title,\n    \"\",\n    \"Room: \" + (event.room || \"room308\"),\n    \"Device: \" + event.device_id,\n    \"Sensor: \" + deviceName\n];\n\n// แสดงค่าที่วัดเมื่อมีข้อมูลเซนเซอร์\nconst r = event.readings || {};\n\nif (event.device_id === \"temp01\") {\n    if (typeof r.temperature === \"number\") {\n        lines.push(\"Temperature: \" + r.temperature + \" °C\");\n    }\n\n    if (typeof r.humidity === \"number\") {\n        lines.push(\"Humidity: \" + r.humidity + \" %\");\n    }\n}\n\nif (event.device_id === \"air01\") {\n    if (typeof r.pm25 === \"number\") {\n        lines.push(\"PM2.5: \" + r.pm25 + \" ug/m3\");\n    }\n}\n\nif (event.event === \"ALERT\" ||\n    event.event === \"RECOVERED\") {\n    lines.push(\"Status: \" + event.status);\n}\n\nif (event.event === \"OFFLINE\") {\n    lines.push(\"No sensor data received.\");\n}\n\nif (event.event === \"ONLINE\") {\n    lines.push(\"Sensor connection restored.\");\n}\n\n\nconst eventTime = event.timestamp\n    ? new Date(event.timestamp)\n    : new Date();\n\nconst thaiTime = eventTime.toLocaleString(\"en-GB\", {\n    timeZone: \"Asia/Bangkok\",\n    hour12: false\n});\n\nlines.push(\"Time (Thailand): \" + thaiTime);\n\n\n// เตรียมคำขอ LINE Messaging API\nmsg.headers = {\n    \"Authorization\": \"Bearer \" + token,\n    \"Content-Type\": \"application/json\"\n};\n\nmsg.payload = JSON.stringify({\n    to: userId,\n    messages: [{\n        type: \"text\",\n        text: lines.join(\"\\n\")\n    }]\n});\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1880,
+        "y": 420,
+        "wires": [
+            [
+                "8a30b522db358ee5"
+            ]
+        ]
+    },
+    {
+        "id": "8a30b522db358ee5",
+        "type": "http request",
+        "z": "d3be21a7afca2e5a",
+        "name": "LINE Push API",
+        "method": "POST",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "https://api.line.me/v2/bot/message/push",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 1860,
+        "y": 520,
+        "wires": [
+            [
+                "042918816c28f0aa"
+            ]
+        ]
+    },
+    {
+        "id": "042918816c28f0aa",
+        "type": "debug",
+        "z": "d3be21a7afca2e5a",
+        "name": "EcoDorm LINE Result",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "statusCode",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1900,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "d30df3efbd8811ec",
+        "type": "influxdb",
+        "hostname": "127.0.0.1",
+        "port": 8086,
+        "protocol": "http",
+        "database": "database",
+        "name": "EcoDorm Proxmox InfluxDB",
+        "usetls": false,
+        "tls": "",
+        "influxdbVersion": "2.0",
+        "url": "http://127.0.0.1:8086",
+        "timeout": 10,
+        "rejectUnauthorized": true
+    },
+    {
+        "id": "bfaea20672a451ba",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-influxdb": "0.7.0"
+        }
+    }
+]

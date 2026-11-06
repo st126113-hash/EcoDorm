@@ -1,0 +1,1 @@
+AI Use Declaration: ChatGPT was used to assist with language refinement, review the technical consistency of the proposed system architecture, and provide feedback on figure layout. The architecture diagram was drawn by the author using diagrams.net. The system implementation, experimental results, and final technical decisions were independently verified by the author.
