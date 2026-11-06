@@ -1,0 +1,22 @@
+# Credentials and environment files
+.env
+.env.*
+!.env.example
+*credentials*
+flows_cred.json
+settings.js
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local caches and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+__pycache__/
+
+# Do not publish screenshot-heavy working evidence or report drafts
+*Evidence.docx
+*.zip
